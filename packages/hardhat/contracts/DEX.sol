@@ -72,7 +72,6 @@ contract DEX {
 	 * NOTE: since ratio is 1:1, this is fine to initialize the totalLiquidity (wrt to balloons) as equal to eth balance of contract.
 	 */
 	function init(uint256 tokens) public payable returns (uint256) {
-		require(totalLiquidity==0,"DEX:init - already has liquidity");
 		totalLiquidity = address(this).balance;
 		liquidity[msg.sender] = totalLiquidity;
 		require(token.transferFrom(msg.sender,address(this), tokens));
@@ -90,8 +89,8 @@ contract DEX {
 	) public pure returns (uint256 yOutput) {
 		uint256 xInputWithFee = xInput * 997;
 		uint256 numerator = xInputWithFee * yReserves;
-		uint256 denominator = (xReserves * 1000) + (xInputWithFee);
-		return (numerator / denominator);
+		uint256 denominator = xReserves * 1000 + xInputWithFee;
+		return numerator / denominator;
 	}
 
 	/**
@@ -108,11 +107,12 @@ contract DEX {
 	 * @notice sends Ether to DEX in exchange for $BAL
 	 */
 	function ethToToken() public payable returns (uint256 tokenOutput) {
+		require(msg.value > 0, "Cannot swap 0 eth");
 		uint256 ethReserve = address(this).balance - msg.value;
 		uint256 token_reserve = token.balanceOf(address(this));
 		uint256 tokens_bought = price(msg.value, ethReserve, token_reserve);
-		require(token.transfer(msg.sender, tokenOutput), "ethToToken(): reverted swap.");
-        emit EthToTokenSwap(msg.sender, msg.value, tokenOutput);
+		require(token.transfer(msg.sender, tokens_bought), "ethToToken(): swap reverted.");
+        emit EthToTokenSwap(msg.sender, tokens_bought, msg.value);
 		return tokens_bought;
 	}
 
@@ -122,11 +122,18 @@ contract DEX {
 	function tokenToEth(
 		uint256 tokenInput
 	) public returns (uint256 ethOutput) {
+		require(tokenInput > 0, "Cannot swap 0 BAL to ETH.");
+
+		uint256 ethBalance = address(this).balance;
 		uint256 token_reserve = token.balanceOf(address(this));
-		uint256 eth_bought = price(tokenInput, token_reserve, token_reserve);
-		(bool sent, ) = msg.sender.call{ value: ethOutput }("");
+		uint256 eth_bought = price(tokenInput, token_reserve, ethBalance);
+
+		require(token.transferFrom(msg.sender, address(this), tokenInput), "tokenToEth(): swap reverted.");
+		
+		(bool sent, ) = msg.sender.call{ value: eth_bought }("");
 		require(sent, "tokenToEth: revert in transferring eth to you!");
-		emit TokenToEthSwap(msg.sender, ethOutput, tokenInput);
+		
+		emit TokenToEthSwap(msg.sender, tokenInput, eth_bought);
 		return eth_bought;
 	}
 
@@ -136,7 +143,17 @@ contract DEX {
 	 * NOTE: user has to make sure to give DEX approval to spend their tokens on their behalf by calling approve function prior to this function call.
 	 * NOTE: Equal parts of both assets will be removed from the user's wallet with respect to the price outlined by the AMM.
 	 */
-	function deposit() public payable returns (uint256 tokensDeposited) {}
+	function deposit() public payable returns (uint256 tokensDeposited) {
+		require(msg.value > 0, "Must send value when depositing");
+		uint256 eth_reserve = (address(this).balance - msg.value);
+		uint256 token_reserve = token.balanceOf(address(this));
+		uint256 token_amount = (msg.value * token_reserve) / (eth_reserve + 1);
+		uint256 liquidity_minted = (msg.value * totalLiquidity) / eth_reserve;
+		liquidity[msg.sender] = liquidity[msg.sender] + liquidity_minted;
+		require(token.transferFrom(msg.sender, address(this), token_amount));
+		emit LiquidityProvided(msg.sender, liquidity_minted, msg.value, token_amount);
+		return liquidity_minted;
+	}
 
 	/**
 	 * @notice allows withdrawal of $BAL and $ETH from liquidity pool
@@ -144,5 +161,14 @@ contract DEX {
 	 */
 	function withdraw(
 		uint256 amount
-	) public returns (uint256 eth_amount, uint256 token_amount) {}
+	) public returns (uint256 eth_amount, uint256 token_amount) {
+		uint256 token_reserve = token.balanceOf(address(this));
+		uint256 eth_amount = (amount * (address(this).balance)) / totalLiquidity;
+		uint256 token_amount = (amount * token_reserve) / totalLiquidity;
+		liquidity[msg.sender] = liquidity[msg.sender] - eth_amount;
+		totalLiquidity = totalLiquidity - eth_amount;
+		(bool sent, ) = msg.sender.call{ value: eth_amount }("");
+		emit LiquidityRemoved(msg.sender, amount, eth_amount, token_amount);
+        return (eth_amount, token_amount);
+	}
 }
