@@ -59,10 +59,10 @@ const deployYourContract: DeployFunction = async function (hre: HardhatRuntimeEn
        "Approving DEX (" + dex.address + ") to take Balloons from main account..."
      );
      // If you are going to the testnet make sure your deployer account has enough ETH
-     await balloons.approve(dex.address, hre.ethers.utils.parseEther("100"));
+     await balloons.approve(dex.address, hre.ethers.utils.parseEther(".1"));
      console.log("INIT exchange...");
-     await dex.init(hre.ethers.utils.parseEther("5"), {
-       value: hre.ethers.utils.parseEther("5"),
+     await dex.init(hre.ethers.utils.parseEther(".1"), {
+       value: hre.ethers.utils.parseEther(".1"),
        gasLimit: 200000,
      });
 
