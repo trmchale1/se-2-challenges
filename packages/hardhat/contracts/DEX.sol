@@ -147,11 +147,14 @@ contract DEX {
 		require(msg.value > 0, "Must send value when depositing");
 		uint256 eth_reserve = (address(this).balance - msg.value);
 		uint256 token_reserve = token.balanceOf(address(this));
-		uint256 token_amount = (msg.value * token_reserve) / (eth_reserve + 1);
+		uint256 token_amount = (msg.value * token_reserve) / eth_reserve;
+
 		uint256 liquidity_minted = (msg.value * totalLiquidity) / eth_reserve;
-		liquidity[msg.sender] = liquidity[msg.sender] + liquidity_minted;
+		liquidity[msg.sender] += liquidity_minted;
+		totalLiquidity += liquidity_minted;
+		
 		require(token.transferFrom(msg.sender, address(this), token_amount));
-		emit LiquidityProvided(msg.sender, liquidity_minted, msg.value, token_amount);
+		emit LiquidityProvided(msg.sender, token_amount, msg.value, liquidity_minted);
 		return liquidity_minted;
 	}
 
@@ -162,13 +165,21 @@ contract DEX {
 	function withdraw(
 		uint256 amount
 	) public returns (uint256 eth_amount, uint256 token_amount) {
-		uint256 token_reserve = token.balanceOf(address(this));
-		uint256 eth_amount = (amount * (address(this).balance)) / totalLiquidity;
-		uint256 token_amount = (amount * token_reserve) / totalLiquidity;
-		liquidity[msg.sender] = liquidity[msg.sender] - eth_amount;
-		totalLiquidity = totalLiquidity - eth_amount;
-		(bool sent, ) = msg.sender.call{ value: eth_amount }("");
-		emit LiquidityRemoved(msg.sender, amount, eth_amount, token_amount);
-        return (eth_amount, token_amount);
+		require(liquidity[msg.sender] >= amount, "sender does not have liquidity to withdraw");
+		
+		uint256 ethReserve = address(this).balance;
+		uint256 tokenReserve = token.balanceOf(address(this));
+		
+		uint256 ethWithdrawn = (amount * ethReserve) / totalLiquidity;
+		
+		uint256 tokenAmount = (amount * tokenReserve) / totalLiquidity;
+		liquidity[msg.sender] -= amount;
+		totalLiquidity -= amount;
+
+		(bool sent, ) = payable(msg.sender).call{ value: ethWithdrawn }("");
+		require(sent, "withdraw(): revert in transferring eth to you!");
+		require(token.transfer(msg.sender, tokenAmount));
+		emit LiquidityRemoved(msg.sender, tokenAmount, ethWithdrawn, amount);
+		return (ethWithdrawn, tokenAmount);
 	}
 }
